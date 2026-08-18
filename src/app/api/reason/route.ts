@@ -12,10 +12,9 @@ export const dynamic = "force-dynamic";
  * and the code keeps working as Google rolls model names forward.
  */
 const MODELS = [
-  "gemini-2.5-flash",
-  "gemini-2.0-flash",
-  "gemini-flash-latest",
-  "gemini-1.5-flash",
+  "gemini-3.6-flash", // current model (per live API guidance, 2026)
+  "gemini-flash-latest", // backup alias (occasionally 503s under load)
+  "gemini-3.6-pro",
 ];
 
 /**
