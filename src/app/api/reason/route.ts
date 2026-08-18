@@ -7,33 +7,55 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Reasoning brain. Uses Gemini when GEMINI_API_KEY is present; otherwise —
- * or on ANY failure — returns the scripted fallback so the demo never breaks.
- * Always responds 200 with a valid Reasoning payload.
+ * Candidate models, newest-first. We try each in order and use the first that
+ * responds — so a retired model (e.g. an old gemini-1.5-*) never breaks the demo,
+ * and the code keeps working as Google rolls model names forward.
  */
-export async function POST() {
+const MODELS = [
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-flash-latest",
+  "gemini-1.5-flash",
+];
+
+/**
+ * Reasoning brain. Uses Gemini when GEMINI_API_KEY is present and a model
+ * responds; otherwise — or on ANY failure — returns the scripted fallback so the
+ * demo never breaks. Always responds 200 with a valid Reasoning payload.
+ * Pass ?debug=1 to see which model was used / why it fell back (no key exposed).
+ */
+export async function POST(req: Request) {
+  const debug = new URL(req.url).searchParams.get("debug") === "1";
   const key = process.env.GEMINI_API_KEY;
-  if (!key) return NextResponse.json(FALLBACK_REASONING);
 
-  try {
-    const genAI = new GoogleGenerativeAI(key);
-    const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
-      generationConfig: {
-        temperature: 0.7,
-        responseMimeType: "application/json",
-      },
-    });
-
-    const prompt = buildPrompt();
-    const result = await model.generateContent(prompt);
-    const raw = result.response.text();
-    const parsed = coerce(JSON.parse(raw));
-    return NextResponse.json(parsed);
-  } catch {
-    // Never surface an error to the cockpit — fall back cleanly.
-    return NextResponse.json(FALLBACK_REASONING);
+  if (!key) {
+    return NextResponse.json(
+      debug ? { ...FALLBACK_REASONING, _debug: { reason: "no GEMINI_API_KEY set" } } : FALLBACK_REASONING,
+    );
   }
+
+  const genAI = new GoogleGenerativeAI(key);
+  const prompt = buildPrompt();
+  const errors: Record<string, string> = {};
+
+  for (const modelName of MODELS) {
+    try {
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        generationConfig: { temperature: 0.7, responseMimeType: "application/json" },
+      });
+      const result = await model.generateContent(prompt);
+      const parsed = coerce(JSON.parse(result.response.text()));
+      return NextResponse.json(debug ? { ...parsed, _debug: { model: modelName } } : parsed);
+    } catch (e) {
+      errors[modelName] = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  // Every model failed — fall back cleanly.
+  return NextResponse.json(
+    debug ? { ...FALLBACK_REASONING, _debug: { keyPresent: true, errors } } : FALLBACK_REASONING,
+  );
 }
 
 function buildPrompt(): string {
@@ -71,8 +93,7 @@ function coerce(obj: unknown): Reasoning {
     rationale: o.rationale ?? FALLBACK_REASONING.rationale,
     optionA: { ...FALLBACK_REASONING.optionA, ...o.optionA, id: "A" },
     critique: o.critique,
-    flaggedRisks:
-      o.flaggedRisks?.length ? o.flaggedRisks : FALLBACK_REASONING.flaggedRisks,
+    flaggedRisks: o.flaggedRisks?.length ? o.flaggedRisks : FALLBACK_REASONING.flaggedRisks,
     optionC: { ...FALLBACK_REASONING.optionC, ...o.optionC, id: "C" },
     source: "gemini",
   };
